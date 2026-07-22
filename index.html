@@ -16,7 +16,9 @@
    CONFIG NOTE (also mirrored in JS CONFIG object at bottom)
    1. SHEET_SUBMIT_URL  -> your deployed Google Apps Script Web App URL
    2. SHEET_CSV_URL     -> your Google Sheet's published-to-web CSV link
-   3. ADMIN_PASSWORD    -> prototype-only gate, replace with real auth
+   3. ADMIN_PASSWORD_HASH -> SHA-256 hash of the admin password (client-side gate,
+      hardened with hashing + attempt lockout, but still not a substitute for real
+      server-side auth — see note near the CONFIG object below)
    ============================================================ */
 
 :root{
@@ -118,8 +120,10 @@ header.nav.scrolled{ padding:14px 0; background:rgba(251,244,234,0.88); backdrop
 .menu-btn span{ width:22px; height:1px; background:var(--ink); }
 .mobile-menu{ position:fixed; inset:0; background:var(--ivory-deep); z-index:600; display:flex; flex-direction:column; justify-content:center; padding:32px; transform:translateY(-100%); transition:transform var(--d-m) var(--ease); }
 .mobile-menu.open{ transform:translateY(0); }
-.mobile-menu ul{ list-style:none; display:flex; flex-direction:column; gap:4px; }
-.mobile-menu a{ font-family:var(--font-display); font-size:30px; padding:10px 0; display:block; opacity:0; transform:translateY(18px); transition:all var(--d-m) var(--ease); }
+.mobile-menu ul{ list-style:none; display:flex; flex-direction:column; }
+.mobile-menu li{ border-bottom:1px solid var(--gold-line); }
+.mobile-menu li:first-child{ border-top:1px solid var(--gold-line); }
+.mobile-menu a{ font-family:var(--font-display); font-size:26px; padding:20px 4px; display:block; opacity:0; transform:translateY(18px); transition:all var(--d-m) var(--ease); letter-spacing:0.01em; }
 .mobile-menu.open a{ opacity:1; transform:translateY(0); }
 .mobile-menu .close-btn{ position:absolute; top:26px; right:26px; width:44px; height:44px; }
 
@@ -214,12 +218,12 @@ blockquote.pull{ font-family:var(--font-serif); font-style:italic; font-size:cla
 
 /* CHAPTERS — real artwork, full bleed */
 .chapters-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:2px; background:var(--gold-line); }
-.chapter-card{ position:relative; aspect-ratio:437/533; overflow:hidden; perspective:900px; }
-.chapter-card img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center top; transition:transform 0.5s var(--ease); transform-style:preserve-3d; will-change:transform; }
+.chapter-card{ position:relative; aspect-ratio:437/533; overflow:hidden; perspective:900px; background:var(--ivory); }
+.chapter-card img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; object-position:center center; transition:transform 0.5s var(--ease); transform-style:preserve-3d; will-change:transform; }
 .chapter-scrim{ position:absolute; left:0; right:0; bottom:0; padding:26px 24px; background:linear-gradient(0deg, rgba(20,12,14,0.86) 0%, rgba(20,12,14,0.6) 45%, rgba(20,12,14,0.05) 100%); }
 .chapter-scrim .chapter-num{ font-size:10.5px; letter-spacing:0.22em; text-transform:uppercase; color:#F6E4D8; opacity:0.95; }
 .chapter-scrim p{ font-size:13.5px; color:#FFFFFF; max-width:30ch; margin-top:6px; }
-@media (max-width:900px){ .chapters-grid{ grid-template-columns:1fr; } .chapter-card{ aspect-ratio:16/11; } .chapter-card img{ object-position:center 18%; } }
+@media (max-width:900px){ .chapters-grid{ grid-template-columns:1fr; } .chapter-card{ aspect-ratio:437/533; } .chapter-card img{ object-position:center center; } }
 
 /* AUTHOR */
 .author-split{ display:grid; grid-template-columns:0.85fr 1.15fr; min-height:78vh; }
@@ -368,6 +372,8 @@ table.admin-table td{ padding:11px 14px; border-top:1px solid var(--gold-line); 
 
 @media (max-width:900px){
   .nav-links{ display:none; } .menu-btn{ display:flex; }
+  .nav-cta .btn-gold{ display:none; }
+  .nav-right{ gap:14px; }
   .story-grid{ grid-template-columns:1fr; } .preorder-grid{ grid-template-columns:1fr; }
   .field-row{ grid-template-columns:1fr; }
 }
@@ -884,7 +890,11 @@ header.nav{ top:36px; }
   var CONFIG = {
     SHEET_SUBMIT_URL: 'PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE',
     SHEET_CSV_URL: 'PASTE_YOUR_PUBLISHED_GOOGLE_SHEET_CSV_URL_HERE',
-    ADMIN_PASSWORD: 'lotus2027',
+    // SHA-256 hash of the admin password (never store the plain password in source).
+    // Current password: qv[6LHrX-Xc-@+Fv
+    ADMIN_PASSWORD_HASH: '5b97dc0baa6abaf29a43bc844fc077e142a73acd4b825a4bdeeb1bab0d498bfe',
+    ADMIN_MAX_ATTEMPTS: 5,
+    ADMIN_LOCKOUT_MS: 60000,
     LAUNCH_DATE: '2027-03-01T00:00:00'
   };
 
@@ -1153,7 +1163,10 @@ header.nav{ top:36px; }
   var adminLoginErr = document.getElementById('adminLoginErr');
   var charts = {};
 
-  function openAdmin(){ adminOverlay.classList.add('open'); }
+  function openAdmin(){
+    adminOverlay.classList.add('open');
+    if(lockRemainingMs() > 0){ showLockMessage(); }
+  }
   function closeAdmin(){ adminOverlay.classList.remove('open'); }
   adminFab.addEventListener('click', openAdmin);
   adminFooterLink.addEventListener('click', openAdmin);
@@ -1162,15 +1175,66 @@ header.nav{ top:36px; }
 
   adminLoginBtn.addEventListener('click', attemptLogin);
   adminPassInput.addEventListener('keydown', function(e){ if(e.key==='Enter') attemptLogin(); });
-  function attemptLogin(){
-    if(adminPassInput.value === CONFIG.ADMIN_PASSWORD){
+
+  var ADMIN_ATTEMPTS_KEY = 'lotusAdminAttempts';
+  var ADMIN_LOCK_KEY = 'lotusAdminLockUntil';
+
+  function getAttempts(){ return parseInt(sessionStorage.getItem(ADMIN_ATTEMPTS_KEY) || '0', 10); }
+  function setAttempts(n){ sessionStorage.setItem(ADMIN_ATTEMPTS_KEY, String(n)); }
+  function getLockUntil(){ return parseInt(sessionStorage.getItem(ADMIN_LOCK_KEY) || '0', 10); }
+  function setLockUntil(ts){ sessionStorage.setItem(ADMIN_LOCK_KEY, String(ts)); }
+
+  async function sha256Hex(text){
+    var enc = new TextEncoder().encode(text);
+    var buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.prototype.map.call(new Uint8Array(buf), function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  }
+
+  function lockRemainingMs(){ return getLockUntil() - Date.now(); }
+
+  function showLockMessage(){
+    var secs = Math.max(1, Math.ceil(lockRemainingMs()/1000));
+    adminLoginErr.textContent = 'Too many attempts. Try again in ' + secs + 's.';
+    adminLoginErr.classList.add('show');
+  }
+
+  async function attemptLogin(){
+    if(lockRemainingMs() > 0){ showLockMessage(); return; }
+
+    adminLoginBtn.disabled = true;
+    var entered = adminPassInput.value;
+    var hash;
+    try{
+      hash = await sha256Hex(entered);
+    } catch(err){
+      // Web Crypto unavailable (very old browser / non-secure context) — fail closed.
+      adminLoginErr.textContent = 'Unable to verify securely in this browser.';
+      adminLoginErr.classList.add('show');
+      adminLoginBtn.disabled = false;
+      return;
+    }
+
+    if(hash === CONFIG.ADMIN_PASSWORD_HASH){
+      setAttempts(0);
+      setLockUntil(0);
       adminLoginErr.classList.remove('show');
+      adminPassInput.value = '';
       adminLogin.style.display='none';
       adminDash.classList.add('show');
       loadDashboardData();
     } else {
-      adminLoginErr.classList.add('show');
+      var attempts = getAttempts() + 1;
+      setAttempts(attempts);
+      if(attempts >= CONFIG.ADMIN_MAX_ATTEMPTS){
+        setLockUntil(Date.now() + CONFIG.ADMIN_LOCKOUT_MS);
+        setAttempts(0);
+        showLockMessage();
+      } else {
+        adminLoginErr.textContent = 'Incorrect password. ' + (CONFIG.ADMIN_MAX_ATTEMPTS - attempts) + ' attempt(s) left.';
+        adminLoginErr.classList.add('show');
+      }
     }
+    adminLoginBtn.disabled = false;
   }
 
   document.getElementById('adminRefreshBtn').addEventListener('click', loadDashboardData);

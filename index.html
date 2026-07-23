@@ -304,10 +304,6 @@ blockquote.pull{ font-family:var(--font-serif); font-style:italic; font-size:cla
 .radio-opt{ display:flex; align-items:center; gap:7px; font-size:13.5px; color:var(--ink-soft); }
 .radio-opt input{ width:16px; height:16px; accent-color:var(--rose-deep); }
 .rsvp-submit{ width:100%; padding:16px; margin-top:6px; }
-.rsvp-success{ display:none; text-align:center; padding:36px 18px; }
-.rsvp-success.show{ display:block; }
-.rsvp-success .mark{ width:46px; height:46px; border:1px solid var(--gold); border-radius:50%; margin:0 auto 18px; display:flex; align-items:center; justify-content:center; color:var(--gold); font-size:18px; }
-.rsvp-success h3{ font-size:21px; margin-bottom:8px; } .rsvp-success p{ color:var(--ink-soft); font-size:14px; }
 
 /* SUCCESS POPUP — celebratory confirmation shown the moment a preorder lands */
 .success-modal-overlay{ position:fixed; inset:0; z-index:3000; background:rgba(46,32,34,0.55); backdrop-filter:blur(6px); display:none; align-items:center; justify-content:center; padding:24px; }
@@ -729,7 +725,6 @@ header.nav{ top:36px; }
       <div class="stat reveal"><div class="num" data-count="9" data-suffix="+">0</div><div class="label">Years in Education</div></div>
       <div class="stat reveal"><div class="num-text" style="font-family:var(--font-display); font-size:clamp(1.3rem,2.8vw,2.1rem); color:var(--rose-deep); font-weight:700;">Chevening &amp; Australia Awards</div><div class="label">Scholar</div></div>
     </div>
-    <p style="text-align:center; color:var(--ink-faint); font-size:13px; margin-top:18px;">Figures shown reflect the author's own account. Connect the CMS to keep this current.</p>
   </div>
 </section>
 
@@ -843,11 +838,6 @@ header.nav{ top:36px; }
           <button type="submit" class="btn-gold rsvp-submit" id="rsvpSubmitBtn">Confirm My Preorder</button>
           <p class="form-note">Your details are stored securely and used only to keep you updated about <em>Beneath the Lotus</em>.</p>
         </form>
-        <div class="rsvp-success" id="rsvpSuccess">
-          <div class="mark">✓</div>
-          <h3>Your preorder is in.</h3>
-          <p>A confirmation is on its way to your email. We'll be in touch with updates as the March 2027 launch gets closer, and if you have questions in the meantime, just reply to that email.</p>
-        </div>
       </div>
     </div>
   </div>
@@ -1186,8 +1176,9 @@ header.nav{ top:36px; }
     submitBtn.disabled = true;
 
     function showSuccess(){
-      form.style.display='none';
-      document.getElementById('rsvpSuccess').classList.add('show');
+      form.reset();
+      submitBtn.textContent = 'Confirm My Preorder';
+      submitBtn.disabled = false;
       if(window.gtag){ window.gtag('event','preorder_submitted'); }
       openSuccessModal();
     }
